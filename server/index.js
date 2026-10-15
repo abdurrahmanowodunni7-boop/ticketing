@@ -4,6 +4,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const prisma = require('./lib/prisma');
 const authRoutes = require('./routes/auth');
+const eventRoutes = require('./routes/events');
 
 const app = express();
 
@@ -21,6 +22,7 @@ app.get('/health', async (req, res) => {
 });
 
 app.use('/auth', authRoutes);
+app.use('/events', eventRoutes);
 
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Server running on port 4000`));
