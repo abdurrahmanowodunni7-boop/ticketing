@@ -1,0 +1,194 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  CUSTOMER
+  ORGANIZER
+  SCANNER
+  ADMIN
+}
+
+enum EventStatus {
+  DRAFT
+  PUBLISHED
+  CANCELLED
+}
+
+enum OrderStatus {
+  PENDING
+  PAID
+  FAILED
+  EXPIRED
+  REFUNDED
+}
+
+enum TicketStatus {
+  VALID
+  CANCELLED
+  REFUNDED
+}
+
+enum ScanResult {
+  ADMITTED
+  REENTRY_ALLOWED
+  REENTRY_LIMIT_REACHED
+  ALREADY_INSIDE
+  CANCELLED
+  INVALID
+  WRONG_EVENT
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  phone        String?
+  role         Role     @default(CUSTOMER)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  eventsOrganized    Event[]             @relation("OrganizerEvents")
+  orders             Order[]
+  scannerAssignments ScannerAssignment[]
+  scanLogs           ScanLog[]
+}
+
+model Event {
+  id             String      @id @default(uuid())
+  organizerId    String
+  title          String
+  description    String?
+  venue          String
+  startsAt       DateTime
+  endsAt         DateTime?
+  status         EventStatus @default(DRAFT)
+  reentryEnabled Boolean     @default(false)
+  maxReentries   Int         @default(2)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  organizer          User                @relation("OrganizerEvents", fields: [organizerId], references: [id])
+  ticketTypes        TicketType[]
+  orders             Order[]
+  tickets            Ticket[]
+  scannerAssignments ScannerAssignment[]
+  scanLogs           ScanLog[]
+
+  @@index([organizerId])
+  @@index([status, startsAt])
+}
+
+model TicketType {
+  id         String    @id @default(uuid())
+  eventId    String
+  name       String
+  priceKobo  Int
+  quantity   Int
+  saleStarts DateTime?
+  saleEnds   DateTime?
+  createdAt  DateTime  @default(now())
+
+  event      Event       @relation(fields: [eventId], references: [id])
+  orderItems OrderItem[]
+  tickets    Ticket[]
+
+  @@index([eventId])
+}
+
+model Order {
+  id                String      @id @default(uuid())
+  userId            String?
+  eventId           String
+  buyerEmail        String
+  buyerName         String
+  status            OrderStatus @default(PENDING)
+  totalKobo         Int
+  paystackReference String      @unique
+  expiresAt         DateTime
+  paidAt            DateTime?
+  createdAt         DateTime    @default(now())
+
+  user    User?       @relation(fields: [userId], references: [id])
+  event   Event       @relation(fields: [eventId], references: [id])
+  items   OrderItem[]
+  tickets Ticket[]
+
+  @@index([eventId])
+  @@index([status, expiresAt])
+}
+
+model OrderItem {
+  id           String @id @default(uuid())
+  orderId      String
+  ticketTypeId String
+  quantity     Int
+  unitKobo     Int
+
+  order      Order      @relation(fields: [orderId], references: [id])
+  ticketType TicketType @relation(fields: [ticketTypeId], references: [id])
+
+  @@index([orderId])
+}
+
+model Ticket {
+  id              String       @id @default(uuid())
+  orderId         String
+  eventId         String
+  ticketTypeId    String
+  attendeeName    String
+  qrTokenHash     String       @unique
+  status          TicketStatus @default(VALID)
+  firstAdmittedAt DateTime?
+  reentryCount    Int          @default(0)
+  createdAt       DateTime     @default(now())
+
+  order      Order      @relation(fields: [orderId], references: [id])
+  event      Event      @relation(fields: [eventId], references: [id])
+  ticketType TicketType @relation(fields: [ticketTypeId], references: [id])
+  scanLogs   ScanLog[]
+
+  @@index([eventId])
+  @@index([orderId])
+}
+
+model ScanLog {
+  id        String     @id @default(uuid())
+  ticketId  String?
+  eventId   String
+  scannerId String
+  result    ScanResult
+  scannedAt DateTime   @default(now())
+
+  ticket  Ticket? @relation(fields: [ticketId], references: [id])
+  event   Event   @relation(fields: [eventId], references: [id])
+  scanner User    @relation(fields: [scannerId], references: [id])
+
+  @@index([eventId, scannedAt])
+  @@index([ticketId])
+}
+
+model ScannerAssignment {
+  id        String @id @default(uuid())
+  eventId   String
+  scannerId String
+
+  event   Event @relation(fields: [eventId], references: [id])
+  scanner User  @relation(fields: [scannerId], references: [id])
+
+  @@unique([eventId, scannerId])
+}
+
+model PaymentEvent {
+  id          String   @id @default(uuid())
+  providerRef String   @unique
+  eventType   String
+  payload     Json
+  processedAt DateTime @default(now())
+}
