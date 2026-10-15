@@ -2,9 +2,9 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
-const { PrismaClient } = require('@prisma/client');
+const prisma = require('./lib/prisma');
+const authRoutes = require('./routes/auth');
 
-const prisma = new PrismaClient();
 const app = express();
 
 app.use(helmet());
@@ -19,6 +19,8 @@ app.get('/health', async (req, res) => {
     res.status(500).json({ status: 'error', database: 'unreachable' });
   }
 });
+
+app.use('/auth', authRoutes);
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
