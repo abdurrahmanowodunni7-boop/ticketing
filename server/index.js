@@ -8,6 +8,8 @@ const eventRoutes = require('./routes/events');
 const orderRoutes = require('./routes/orders');
 const paymentRoutes = require('./routes/payments');
 const webhookRoutes = require('./routes/webhooks');
+const ticketRoutes = require('./routes/tickets');
+const scanRoutes = require('./routes/scan');
 
 const app = express();
 
@@ -16,7 +18,6 @@ app.use(cors());
 
 // Webhooks first: they need the raw request body.
 app.use('/webhooks', webhookRoutes);
-const ticketRoutes = require('./routes/tickets');
 
 app.use(express.json());
 
@@ -34,6 +35,7 @@ app.use('/events', eventRoutes);
 app.use('/orders', orderRoutes);
 app.use('/payments', paymentRoutes);
 app.use('/tickets', ticketRoutes);
+app.use('/scan', scanRoutes);
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
