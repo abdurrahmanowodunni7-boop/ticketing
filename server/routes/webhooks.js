@@ -8,6 +8,15 @@ function hashToken(token) {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
 
+function encryptToken(token) {
+  const key = Buffer.from(process.env.TOKEN_ENCRYPTION_KEY, 'hex');
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const enc = Buffer.concat([cipher.update(token, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return [iv, tag, enc].map((b) => b.toString('base64url')).join('.');
+}
+
 // Paystack sends raw JSON; we need the raw bytes to check the signature.
 router.post('/paystack', express.raw({ type: 'application/json' }), async (req, res) => {
   const signature = req.headers['x-paystack-signature'];
@@ -22,7 +31,6 @@ router.post('/paystack', express.raw({ type: 'application/json' }), async (req, 
 
   const event = JSON.parse(req.body.toString());
 
-  // Only successful charges matter here.
   if (event.event !== 'charge.success') {
     return res.sendStatus(200);
   }
@@ -43,7 +51,6 @@ router.post('/paystack', express.raw({ type: 'application/json' }), async (req, 
       if (!order) return;
       if (order.status === 'PAID') return;
 
-      // Amount must match what we expected.
       if (event.data.amount !== order.totalKobo) {
         console.error('Amount mismatch for', reference);
         return;
@@ -64,9 +71,9 @@ router.post('/paystack', express.raw({ type: 'application/json' }), async (req, 
               ticketTypeId: item.ticketTypeId,
               attendeeName: order.buyerName,
               qrTokenHash: hashToken(token),
+              qrTokenEnc: encryptToken(token),
             },
           });
-          // NOTE: the raw token is not stored. We deliver it by email in the next step.
         }
       }
     });

@@ -144,6 +144,7 @@ model Ticket {
   ticketTypeId    String
   attendeeName    String
   qrTokenHash     String       @unique
+   qrTokenEnc      String?
   status          TicketStatus @default(VALID)
   firstAdmittedAt DateTime?
   reentryCount    Int          @default(0)
