@@ -16,6 +16,7 @@ app.use(cors());
 
 // Webhooks first: they need the raw request body.
 app.use('/webhooks', webhookRoutes);
+const ticketRoutes = require('./routes/tickets');
 
 app.use(express.json());
 
@@ -32,6 +33,7 @@ app.use('/auth', authRoutes);
 app.use('/events', eventRoutes);
 app.use('/orders', orderRoutes);
 app.use('/payments', paymentRoutes);
+app.use('/tickets', ticketRoutes);
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
