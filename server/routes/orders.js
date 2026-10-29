@@ -3,6 +3,7 @@ const express = require('express');
 const { z } = require('zod');
 const { Prisma } = require('@prisma/client');
 const prisma = require('../lib/prisma');
+const { serviceFeeFor } = require('../lib/fees');
 
 const router = express.Router();
 
@@ -24,6 +25,57 @@ const orderSchema = z.object({
     .max(10),
 });
 
+const quoteSchema = orderSchema.pick({ eventId: true, items: true });
+
+function mergeItems(items) {
+  const merged = {};
+  for (const item of items) {
+    merged[item.ticketTypeId] = (merged[item.ticketTypeId] || 0) + item.quantity;
+  }
+  return merged;
+}
+
+// ---------- Price preview (no tickets held) ----------
+router.post('/quote', async (req, res) => {
+  const parsed = quoteSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'Invalid input', details: parsed.error.issues });
+  }
+  const { eventId } = parsed.data;
+  const merged = mergeItems(parsed.data.items);
+  const ids = Object.keys(merged);
+  const totalQty = Object.values(merged).reduce((a, b) => a + b, 0);
+  if (totalQty > MAX_PER_ORDER) {
+    return res.status(400).json({ error: `Maximum ${MAX_PER_ORDER} tickets per order` });
+  }
+
+  const event = await prisma.event.findUnique({ where: { id: eventId } });
+  if (!event || event.status !== 'PUBLISHED') {
+    return res.status(404).json({ error: 'Event not available' });
+  }
+  const types = await prisma.ticketType.findMany({ where: { id: { in: ids }, eventId } });
+  if (types.length !== ids.length) {
+    return res.status(400).json({ error: 'Invalid ticket type' });
+  }
+
+  const lines = types.map((t) => ({ unitKobo: t.priceKobo, quantity: merged[t.id] }));
+  const subtotalKobo = lines.reduce((s, l) => s + l.unitKobo * l.quantity, 0);
+
+  try {
+    const serviceFeeKobo = await serviceFeeFor(prisma, event.feeMethod, lines);
+    res.json({
+      feeMethod: event.feeMethod,
+      subtotalKobo,
+      serviceFeeKobo,
+      totalKobo: subtotalKobo + serviceFeeKobo,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Could not calculate the price' });
+  }
+});
+
+// ---------- Create an order and hold the tickets ----------
 router.post('/', async (req, res) => {
   const parsed = orderSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -31,11 +83,7 @@ router.post('/', async (req, res) => {
   }
   const { eventId, buyerName, buyerEmail } = parsed.data;
 
-  // Merge duplicate ticket types into one line each.
-  const merged = {};
-  for (const item of parsed.data.items) {
-    merged[item.ticketTypeId] = (merged[item.ticketTypeId] || 0) + item.quantity;
-  }
+  const merged = mergeItems(parsed.data.items);
   const ids = Object.keys(merged);
   const totalQty = Object.values(merged).reduce((a, b) => a + b, 0);
   if (totalQty > MAX_PER_ORDER) {
@@ -60,7 +108,7 @@ router.post('/', async (req, res) => {
       if (types.length !== ids.length) throw new Error('BAD_TICKET_TYPE');
 
       const now = new Date();
-      let totalKobo = 0;
+      let subtotalKobo = 0;
       const lines = [];
 
       for (const t of types) {
@@ -85,18 +133,22 @@ router.post('/', async (req, res) => {
           throw new Error('NOT_ENOUGH:' + t.name + ':' + Math.max(0, available));
         }
 
-        totalKobo += t.priceKobo * wanted;
+        subtotalKobo += t.priceKobo * wanted;
         lines.push({ ticketTypeId: t.id, quantity: wanted, unitKobo: t.priceKobo });
       }
 
-      if (totalKobo === 0) throw new Error('FREE_NOT_SUPPORTED');
+      if (subtotalKobo === 0) throw new Error('FREE_NOT_SUPPORTED');
+
+      const serviceFeeKobo = await serviceFeeFor(tx, event.feeMethod, lines);
 
       return tx.order.create({
         data: {
           eventId,
           buyerName,
           buyerEmail,
-          totalKobo,
+          subtotalKobo,
+          serviceFeeKobo,
+          totalKobo: subtotalKobo + serviceFeeKobo,
           status: 'PENDING',
           paystackReference: 'TKT-' + crypto.randomBytes(12).toString('hex'),
           expiresAt: new Date(Date.now() + HOLD_MINUTES * 60 * 1000),
@@ -110,6 +162,8 @@ router.post('/', async (req, res) => {
       order: {
         id: order.id,
         reference: order.paystackReference,
+        subtotalKobo: order.subtotalKobo,
+        serviceFeeKobo: order.serviceFeeKobo,
         totalKobo: order.totalKobo,
         expiresAt: order.expiresAt,
         items: order.items,

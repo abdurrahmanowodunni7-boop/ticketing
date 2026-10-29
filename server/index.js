@@ -10,6 +10,8 @@ const paymentRoutes = require('./routes/payments');
 const webhookRoutes = require('./routes/webhooks');
 const ticketRoutes = require('./routes/tickets');
 const scanRoutes = require('./routes/scan');
+const bankingRoutes = require('./routes/banking');
+const adminRoutes = require('./routes/admin');
 
 const app = express();
 
@@ -36,6 +38,12 @@ app.use('/orders', orderRoutes);
 app.use('/payments', paymentRoutes);
 app.use('/tickets', ticketRoutes);
 app.use('/scan', scanRoutes);
+app.use('/banking', bankingRoutes);
+app.use('/admin', adminRoutes);
 
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+const server = app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+server.on('error', (err) => {
+  console.error('Server failed to start:', err.message);
+  process.exit(1);
+});

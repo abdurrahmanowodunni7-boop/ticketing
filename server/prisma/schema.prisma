@@ -44,15 +44,24 @@ enum ScanResult {
   WRONG_EVENT
 }
 
+enum FeeMethod {
+  PERCENTAGE
+  FIXED_TIERS
+}
+
 model User {
-  id           String   @id @default(uuid())
-  email        String   @unique
-  passwordHash String
-  name         String
-  phone        String?
-  role         Role     @default(CUSTOMER)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id             String   @id @default(uuid())
+  email          String   @unique
+  passwordHash   String
+  name           String
+  phone          String?
+  role           Role     @default(CUSTOMER)
+  bankName       String?
+  accountName    String?
+  accountLast4   String?
+  subaccountCode String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   eventsOrganized    Event[]             @relation("OrganizerEvents")
   orders             Order[]
@@ -71,6 +80,7 @@ model Event {
   status         EventStatus @default(DRAFT)
   reentryEnabled Boolean     @default(false)
   maxReentries   Int         @default(2)
+  feeMethod      FeeMethod   @default(PERCENTAGE)
   createdAt      DateTime    @default(now())
   updatedAt      DateTime    @updatedAt
 
@@ -109,6 +119,8 @@ model Order {
   buyerEmail        String
   buyerName         String
   status            OrderStatus @default(PENDING)
+  subtotalKobo      Int         @default(0)
+  serviceFeeKobo    Int         @default(0)
   totalKobo         Int
   paystackReference String      @unique
   expiresAt         DateTime
@@ -144,7 +156,7 @@ model Ticket {
   ticketTypeId    String
   attendeeName    String
   qrTokenHash     String       @unique
-   qrTokenEnc      String?
+  qrTokenEnc      String?
   status          TicketStatus @default(VALID)
   firstAdmittedAt DateTime?
   reentryCount    Int          @default(0)
@@ -192,4 +204,15 @@ model PaymentEvent {
   eventType   String
   payload     Json
   processedAt DateTime @default(now())
+}
+
+model FeeSettings {
+  id      Int   @id @default(1)
+  percent Float @default(5)
+}
+
+model FeeTier {
+  id       String @id @default(uuid())
+  upToKobo Int    @unique
+  feeKobo  Int
 }

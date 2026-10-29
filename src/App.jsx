@@ -2,6 +2,7 @@ import { Link, Route, Routes } from 'react-router-dom';
 import Home from './pages/Home';
 import EventDetails from './pages/EventDetails';
 import Tickets from './pages/Tickets';
+import Scanner from './pages/Scanner';
 
 function App() {
   return (
@@ -25,6 +26,7 @@ function App() {
         <Route path="/" element={<Home />} />
         <Route path="/events/:id" element={<EventDetails />} />
         <Route path="/tickets/:orderId" element={<Tickets />} />
+        <Route path="/scan" element={<Scanner />} />
       </Routes>
     </div>
   );
