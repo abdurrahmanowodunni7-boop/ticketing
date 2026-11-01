@@ -1,21 +1,8 @@
 const crypto = require('crypto');
 const express = require('express');
-const prisma = require('../lib/prisma');
+const { fulfillOrder } = require('../lib/fulfill');
 
 const router = express.Router();
-
-function hashToken(token) {
-  return crypto.createHash('sha256').update(token).digest('hex');
-}
-
-function encryptToken(token) {
-  const key = Buffer.from(process.env.TOKEN_ENCRYPTION_KEY, 'hex');
-  const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
-  const enc = Buffer.concat([cipher.update(token, 'utf8'), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  return [iv, tag, enc].map((b) => b.toString('base64url')).join('.');
-}
 
 // Paystack sends raw JSON; we need the raw bytes to check the signature.
 router.post('/paystack', express.raw({ type: 'application/json' }), async (req, res) => {
@@ -30,59 +17,14 @@ router.post('/paystack', express.raw({ type: 'application/json' }), async (req, 
   }
 
   const event = JSON.parse(req.body.toString());
-
-  if (event.event !== 'charge.success') {
-    return res.sendStatus(200);
-  }
-
-  const reference = event.data.reference;
+  if (event.event !== 'charge.success') return res.sendStatus(200);
 
   try {
-    await prisma.$transaction(async (tx) => {
-      // Duplicate protection: providerRef is unique, so a repeat throws P2002.
-      await tx.paymentEvent.create({
-        data: { providerRef: reference, eventType: event.event, payload: event.data },
-      });
-
-      const order = await tx.order.findUnique({
-        where: { paystackReference: reference },
-        include: { items: true },
-      });
-      if (!order) return;
-      if (order.status === 'PAID') return;
-
-      if (event.data.amount !== order.totalKobo) {
-        console.error('Amount mismatch for', reference);
-        return;
-      }
-
-      await tx.order.update({
-        where: { id: order.id },
-        data: { status: 'PAID', paidAt: new Date() },
-      });
-
-      for (const item of order.items) {
-        for (let i = 0; i < item.quantity; i++) {
-          const token = crypto.randomBytes(32).toString('base64url');
-          await tx.ticket.create({
-            data: {
-              orderId: order.id,
-              eventId: order.eventId,
-              ticketTypeId: item.ticketTypeId,
-              attendeeName: order.buyerName,
-              qrTokenHash: hashToken(token),
-              qrTokenEnc: encryptToken(token),
-            },
-          });
-        }
-      }
-    });
+    await fulfillOrder(event.data.reference, event.data.amount, event.data);
   } catch (err) {
-    if (err.code === 'P2002') return res.sendStatus(200); // duplicate delivery
     console.error('Webhook error:', err);
     return res.sendStatus(500); // Paystack will retry
   }
-
   res.sendStatus(200);
 });
 

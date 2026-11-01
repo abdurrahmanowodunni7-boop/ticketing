@@ -121,6 +121,7 @@ model Order {
   status            OrderStatus @default(PENDING)
   subtotalKobo      Int         @default(0)
   serviceFeeKobo    Int         @default(0)
+  processingFeeKobo Int        @default(0)
   totalKobo         Int
   paystackReference String      @unique
   expiresAt         DateTime

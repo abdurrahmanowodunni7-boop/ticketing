@@ -3,7 +3,8 @@ const express = require('express');
 const { z } = require('zod');
 const { Prisma } = require('@prisma/client');
 const prisma = require('../lib/prisma');
-const { serviceFeeFor } = require('../lib/fees');
+const { requireAuth } = require('../middleware/auth');
+const { serviceFeeFor, processingFeeFor } = require('../lib/fees');
 
 const router = express.Router();
 
@@ -12,8 +13,6 @@ const MAX_PER_ORDER = 10;
 
 const orderSchema = z.object({
   eventId: z.string().min(1),
-  buyerName: z.string().trim().min(2).max(100),
-  buyerEmail: z.string().trim().toLowerCase().email(),
   items: z
     .array(
       z.object({
@@ -25,8 +24,6 @@ const orderSchema = z.object({
     .max(10),
 });
 
-const quoteSchema = orderSchema.pick({ eventId: true, items: true });
-
 function mergeItems(items) {
   const merged = {};
   for (const item of items) {
@@ -37,7 +34,7 @@ function mergeItems(items) {
 
 // ---------- Price preview (no tickets held) ----------
 router.post('/quote', async (req, res) => {
-  const parsed = quoteSchema.safeParse(req.body);
+  const parsed = orderSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: 'Invalid input', details: parsed.error.issues });
   }
@@ -63,11 +60,13 @@ router.post('/quote', async (req, res) => {
 
   try {
     const serviceFeeKobo = await serviceFeeFor(prisma, event.feeMethod, lines);
+    const processingFeeKobo = processingFeeFor(subtotalKobo + serviceFeeKobo);
     res.json({
       feeMethod: event.feeMethod,
       subtotalKobo,
       serviceFeeKobo,
-      totalKobo: subtotalKobo + serviceFeeKobo,
+      processingFeeKobo,
+      totalKobo: subtotalKobo + serviceFeeKobo + processingFeeKobo,
     });
   } catch (err) {
     console.error(err);
@@ -75,13 +74,16 @@ router.post('/quote', async (req, res) => {
   }
 });
 
-// ---------- Create an order and hold the tickets ----------
-router.post('/', async (req, res) => {
+// ---------- Create an order and hold the tickets (login required) ----------
+router.post('/', requireAuth, async (req, res) => {
   const parsed = orderSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: 'Invalid input', details: parsed.error.issues });
   }
-  const { eventId, buyerName, buyerEmail } = parsed.data;
+  const { eventId } = parsed.data;
+
+  const buyer = await prisma.user.findUnique({ where: { id: req.user.id } });
+  if (!buyer) return res.status(401).json({ error: 'Please log in again' });
 
   const merged = mergeItems(parsed.data.items);
   const ids = Object.keys(merged);
@@ -140,15 +142,18 @@ router.post('/', async (req, res) => {
       if (subtotalKobo === 0) throw new Error('FREE_NOT_SUPPORTED');
 
       const serviceFeeKobo = await serviceFeeFor(tx, event.feeMethod, lines);
+      const processingFeeKobo = processingFeeFor(subtotalKobo + serviceFeeKobo);
 
       return tx.order.create({
         data: {
+          userId: buyer.id,
           eventId,
-          buyerName,
-          buyerEmail,
+          buyerName: buyer.name,
+          buyerEmail: buyer.email,
           subtotalKobo,
           serviceFeeKobo,
-          totalKobo: subtotalKobo + serviceFeeKobo,
+          processingFeeKobo,
+          totalKobo: subtotalKobo + serviceFeeKobo + processingFeeKobo,
           status: 'PENDING',
           paystackReference: 'TKT-' + crypto.randomBytes(12).toString('hex'),
           expiresAt: new Date(Date.now() + HOLD_MINUTES * 60 * 1000),
@@ -164,6 +169,7 @@ router.post('/', async (req, res) => {
         reference: order.paystackReference,
         subtotalKobo: order.subtotalKobo,
         serviceFeeKobo: order.serviceFeeKobo,
+        processingFeeKobo: order.processingFeeKobo,
         totalKobo: order.totalKobo,
         expiresAt: order.expiresAt,
         items: order.items,
