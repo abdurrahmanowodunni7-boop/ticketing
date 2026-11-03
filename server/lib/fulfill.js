@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const prisma = require('./prisma');
+const { sendTicketEmail } = require('./mailer');
 
 function hashToken(token) {
   return crypto.createHash('sha256').update(token).digest('hex');
@@ -16,7 +17,7 @@ function encryptToken(token) {
 
 // Marks an order paid and creates its tickets. Safe to call more than once.
 async function fulfillOrder(reference, paidKobo, payload) {
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const order = await tx.order.findUnique({
       where: { paystackReference: reference },
       include: { items: true },
@@ -59,6 +60,12 @@ async function fulfillOrder(reference, paidKobo, payload) {
     }
     return { ok: true, orderId: order.id };
   });
+
+  // After the payment is safely saved, email the buyer. Never blocks or undoes the order.
+  if (result.ok && !result.already) {
+    sendTicketEmail(result.orderId).catch((err) => console.error('Email failed:', err.message));
+  }
+  return result;
 }
 
 module.exports = { fulfillOrder };
