@@ -3,6 +3,8 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const prisma = require('./lib/prisma');
+const { authLimiter, orderLimiter, quoteLimiter, verifyLimiter, scanLimiter } = require('./lib/limits');
+const { startCleanup } = require('./lib/cleanup');
 const authRoutes = require('./routes/auth');
 const eventRoutes = require('./routes/events');
 const orderRoutes = require('./routes/orders');
@@ -19,7 +21,7 @@ const app = express();
 app.use(helmet());
 app.use(cors());
 
-// Webhooks first: they need the raw request body.
+// Webhooks first: they need the raw request body, and must never be rate limited.
 app.use('/webhooks', webhookRoutes);
 
 app.use(express.json());
@@ -33,18 +35,24 @@ app.get('/health', async (req, res) => {
   }
 });
 
-app.use('/auth', authRoutes);
+app.use('/auth', authLimiter, authRoutes);
 app.use('/events', eventRoutes);
+app.use('/orders/quote', quoteLimiter);
+app.post('/orders', orderLimiter);
 app.use('/orders', orderRoutes);
+app.use('/payments/verify', verifyLimiter);
 app.use('/payments', paymentRoutes);
 app.use('/tickets', ticketRoutes);
-app.use('/scan', scanRoutes);
+app.use('/scan', scanLimiter, scanRoutes);
 app.use('/banking', bankingRoutes);
 app.use('/admin', adminRoutes);
 app.use('/staff', staffRoutes);
 
 const PORT = process.env.PORT || 4000;
-const server = app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+const server = app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+  startCleanup();
+});
 server.on('error', (err) => {
   console.error('Server failed to start:', err.message);
   process.exit(1);
