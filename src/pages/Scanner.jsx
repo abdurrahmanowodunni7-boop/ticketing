@@ -1,19 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
+import { Navigate } from 'react-router-dom';
 import { Html5Qrcode } from 'html5-qrcode';
 import { API_URL } from '../api';
+import { useAuth } from '../auth.jsx';
 
 export default function Scanner() {
-  const [token, setToken] = useState(() => sessionStorage.getItem('scanToken') || '');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [loginError, setLoginError] = useState('');
+  const { token, logout } = useAuth();
 
   const [events, setEvents] = useState([]);
   const [eventId, setEventId] = useState('');
+  const [loadError, setLoadError] = useState('');
 
   const [scanning, setScanning] = useState(false);
   const [result, setResult] = useState(null);
   const [cameraError, setCameraError] = useState('');
+  const [manualToken, setManualToken] = useState('');
 
   const scannerRef = useRef(null);
   const busyRef = useRef(false);
@@ -23,40 +24,25 @@ export default function Scanner() {
   useEffect(() => { eventIdRef.current = eventId; }, [eventId]);
   useEffect(() => { tokenRef.current = token; }, [token]);
 
-  // Load events once logged in.
   useEffect(() => {
     if (!token) return;
     fetch(`${API_URL}/events/mine/list`, { headers: { Authorization: `Bearer ${token}` } })
-      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((r) => {
+        if (r.status === 401) {
+          logout();
+          throw new Error('Please log in again.');
+        }
+        if (r.status === 403) throw new Error('This account cannot scan tickets.');
+        if (!r.ok) throw new Error('Could not load events.');
+        return r.json();
+      })
       .then((d) => {
         setEvents(d.events);
         if (d.events[0]) setEventId(d.events[0].id);
       })
-      .catch(() => {
-        sessionStorage.removeItem('scanToken');
-        setToken('');
-      });
+      .catch((err) => setLoadError(err.message));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
-
-  async function login(e) {
-    e.preventDefault();
-    setLoginError('');
-    const res = await fetch(`${API_URL}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    });
-    const data = await res.json();
-    if (!res.ok) return setLoginError(data.error || 'Login failed');
-    sessionStorage.setItem('scanToken', data.token);
-    setToken(data.token);
-  }
-
-  function logout() {
-    stopCamera();
-    sessionStorage.removeItem('scanToken');
-    setToken('');
-  }
 
   async function handleScan(text) {
     if (busyRef.current) return;
@@ -93,7 +79,7 @@ export default function Scanner() {
       );
       setScanning(true);
     } catch {
-      setCameraError('Could not open the camera. Allow camera access and use HTTPS or localhost.');
+      setCameraError('Could not open the camera. Allow camera access, and use HTTPS or localhost.');
     }
   }
 
@@ -108,6 +94,14 @@ export default function Scanner() {
     setScanning(false);
   }
 
+  function checkManual() {
+    const text = manualToken.trim();
+    if (!text) return;
+    busyRef.current = false;
+    handleScan(text);
+    setManualToken('');
+  }
+
   function scanNext() {
     setResult(null);
     busyRef.current = false;
@@ -115,43 +109,14 @@ export default function Scanner() {
 
   useEffect(() => () => { stopCamera(); }, []);
 
-  // ---------- Login screen ----------
-  if (!token) {
-    return (
-      <div className="mx-auto max-w-sm px-8 py-16">
-        <h2 className="text-3xl font-bold">Staff login</h2>
-        <form onSubmit={login} className="mt-6 space-y-4">
-          <input
-            type="email"
-            placeholder="Email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="w-full rounded-lg border border-gray-700 bg-gray-900 px-4 py-3"
-          />
-          <input
-            type="password"
-            placeholder="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="w-full rounded-lg border border-gray-700 bg-gray-900 px-4 py-3"
-          />
-          {loginError && <p className="text-red-400">{loginError}</p>}
-          <button className="w-full rounded-lg bg-purple-600 py-3 font-semibold hover:bg-purple-700">
-            Log in
-          </button>
-        </form>
-      </div>
-    );
-  }
+  if (!token) return <Navigate to="/login" state={{ from: '/scan' }} replace />;
 
-  // ---------- Scanner screen ----------
   const good = result?.ok;
   return (
     <div className="mx-auto max-w-md px-6 py-8">
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold">Scanner</h2>
-        <button onClick={logout} className="text-sm text-gray-400 hover:text-white">Log out</button>
-      </div>
+      <h2 className="text-2xl font-bold">Scanner</h2>
+
+      {loadError && <p className="mt-4 text-red-400">{loadError}</p>}
 
       <select
         value={eventId}
@@ -159,13 +124,13 @@ export default function Scanner() {
         disabled={scanning}
         className="mt-4 w-full rounded-lg border border-gray-700 bg-gray-900 px-4 py-3"
       >
+        {events.length === 0 && <option value="">No events found</option>}
         {events.map((ev) => (
           <option key={ev.id} value={ev.id}>{ev.title}</option>
         ))}
       </select>
 
       <div id="qr-reader" className="mt-4 overflow-hidden rounded-lg" />
-
       {cameraError && <p className="mt-3 text-red-400">{cameraError}</p>}
 
       {!scanning ? (
@@ -181,6 +146,24 @@ export default function Scanner() {
           Stop camera
         </button>
       )}
+
+      <div className="mt-8 border-t border-gray-800 pt-6">
+        <p className="mb-2 text-sm text-gray-400">Camera not working? Paste the ticket code:</p>
+        <input
+          value={manualToken}
+          onChange={(e) => setManualToken(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') checkManual(); }}
+          placeholder="Ticket code"
+          className="w-full rounded-lg border border-gray-700 bg-gray-900 px-4 py-3"
+        />
+        <button
+          onClick={checkManual}
+          disabled={!eventId || !manualToken.trim()}
+          className="mt-2 w-full rounded-lg bg-gray-700 py-3 font-semibold disabled:opacity-50"
+        >
+          Check ticket
+        </button>
+      </div>
 
       {result && (
         <div className={`fixed inset-0 z-50 flex flex-col items-center justify-center p-8 text-center ${good ? 'bg-green-600' : 'bg-red-600'}`}>
