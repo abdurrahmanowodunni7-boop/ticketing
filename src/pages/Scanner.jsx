@@ -26,7 +26,7 @@ export default function Scanner() {
 
   useEffect(() => {
     if (!token) return;
-    fetch(`${API_URL}/events/mine/list`, { headers: { Authorization: `Bearer ${token}` } })
+    fetch(`${API_URL}/scan/events`, { headers: { Authorization: `Bearer ${token}` } })
       .then((r) => {
         if (r.status === 401) {
           logout();

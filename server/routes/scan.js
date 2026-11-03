@@ -28,6 +28,28 @@ async function canScan(user, event) {
   return false;
 }
 
+// Events this person is allowed to scan.
+router.get('/events', requireAuth, requireRole('SCANNER', 'ORGANIZER', 'ADMIN'), async (req, res) => {
+  const select = { id: true, title: true, startsAt: true };
+  let events;
+  if (req.user.role === 'ADMIN') {
+    events = await prisma.event.findMany({ select, orderBy: { startsAt: 'desc' } });
+  } else if (req.user.role === 'ORGANIZER') {
+    events = await prisma.event.findMany({
+      where: { organizerId: req.user.id },
+      select,
+      orderBy: { startsAt: 'desc' },
+    });
+  } else {
+    events = await prisma.event.findMany({
+      where: { scannerAssignments: { some: { scannerId: req.user.id } } },
+      select,
+      orderBy: { startsAt: 'desc' },
+    });
+  }
+  res.json({ events });
+});
+
 router.post('/', requireAuth, requireRole('SCANNER', 'ORGANIZER', 'ADMIN'), async (req, res) => {
   const parsed = scanSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Invalid input' });
